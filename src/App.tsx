@@ -99,7 +99,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isConfigured || !session) {
+    if (!isConfigured) {
       setLoading(false);
       return;
     }
@@ -119,7 +119,7 @@ export default function App() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session, isConfigured]);
+  }, [isConfigured]);
 
   const fetchMerchant = async () => {
     try {
@@ -360,23 +360,6 @@ export default function App() {
               <p>VITE_SUPABASE_URL</p>
               <p>VITE_SUPABASE_ANON_KEY</p>
             </div>
-          </div>
-        ) : !session ? (
-          <div className="text-center py-20 space-y-6">
-            <div className="w-24 h-24 bg-emerald-50 rounded-[2.5rem] flex items-center justify-center mx-auto shadow-xl shadow-emerald-100">
-              <Smartphone className="w-12 h-12 text-emerald-600" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-2xl font-black tracking-tight">مرحباً بك في مدى</h2>
-              <p className="text-gray-500 text-sm px-10">سجل دخولك لإدارة طلبات متجرك عبر واتساب بكل سهولة.</p>
-            </div>
-            <button 
-              onClick={handleLogin}
-              className="w-full bg-emerald-600 text-white py-4 rounded-3xl font-bold text-base shadow-xl shadow-emerald-200 flex items-center justify-center gap-3 hover:bg-emerald-700 transition-all active:scale-95"
-            >
-              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5 bg-white rounded-full p-0.5" />
-              الدخول بواسطة جوجل
-            </button>
           </div>
         ) : error ? (
           <div className="text-center py-20 space-y-4">
