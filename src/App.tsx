@@ -57,8 +57,33 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [merchant, setMerchant] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showBanner, setShowBanner] = useState(true);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState<{id: string, text: string, time: string, read: boolean}[]>([
+    { id: '1', text: 'مرحباً بك في مدى OMS! ابدأ بإدارة طلباتك الآن.', time: 'الآن', read: false },
+    { id: '2', text: 'تنبيه: مخزون "قهوة عربية" منخفض جداً.', time: 'منذ ساعة', read: false },
+  ]);
+
+  const quotes = [
+    "النجاح هو مجموع جهود صغيرة تتكرر يوماً بعد يوم.",
+    "التجارة شطارة، والإدارة مهارة.",
+    "عميلك الراضي هو أفضل وسيلة إعلانية.",
+    "ابدأ صغيراً، فكر كبيراً، وانطلق الآن.",
+    "الجودة هي ما يجعلك تستمر في المنافسة.",
+    "كل طلب جديد هو خطوة نحو حلمك الكبير.",
+    "رضا العميل هو رأس مالك الحقيقي."
+  ];
+
+  const [currentQuote] = useState(() => quotes[Math.floor(Math.random() * quotes.length)]);
 
   const isConfigured = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  useEffect(() => {
+    if (showBanner) {
+      const timer = setTimeout(() => setShowBanner(false), 10000);
+      return () => clearTimeout(timer);
+    }
+  }, [showBanner]);
 
   useEffect(() => {
     // Check active session
@@ -94,7 +119,7 @@ export default function App() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [session, isConfigured]);
 
   const fetchMerchant = async () => {
     try {
@@ -179,6 +204,20 @@ export default function App() {
   const updateOrderStatus = async (orderId: string, newStatus: OrderStatus) => {
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     
+    // Add notification
+    const order = orders.find(o => o.id === orderId);
+    if (order) {
+      setNotifications(prev => [
+        { 
+          id: Math.random().toString(), 
+          text: `تم تحديث حالة طلب ${order.customer_name} إلى "${STATUS_CONFIG[newStatus].label}"`, 
+          time: 'الآن', 
+          read: false 
+        },
+        ...prev
+      ]);
+    }
+
     const { error } = await supabase
       .from('orders')
       .update({ status: newStatus })
@@ -225,12 +264,87 @@ export default function App() {
               <User className="w-5 h-5" />
             </button>
           )}
-          <button className="p-2 text-gray-400 hover:text-emerald-600 transition-colors relative">
+          <button 
+            onClick={() => setShowNotifications(!showNotifications)}
+            className="p-2 text-gray-400 hover:text-emerald-600 transition-colors relative"
+          >
             <Bell className="w-5 h-5" />
-            <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+            {notifications.some(n => !n.read) && (
+              <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
+            )}
           </button>
         </div>
       </header>
+
+      {/* Promotional Banner */}
+      <AnimatePresence>
+        {showBanner && session && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-emerald-600 text-white overflow-hidden"
+          >
+            <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="bg-white/20 p-1.5 rounded-lg">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+                <p className="text-xs font-bold leading-tight">{currentQuote}</p>
+              </div>
+              <button onClick={() => setShowBanner(false)} className="text-white/60 hover:text-white">
+                <Plus className="w-4 h-4 rotate-45" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Notifications Modal */}
+      <AnimatePresence>
+        {showNotifications && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowNotifications(false)}
+              className="fixed inset-0 bg-black/20 backdrop-blur-sm z-[60]"
+            />
+            <motion.div 
+              initial={{ opacity: 0, y: -20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.95 }}
+              className="fixed top-16 left-4 right-4 bg-white rounded-3xl shadow-2xl z-[70] border border-gray-100 overflow-hidden max-w-md mx-auto"
+            >
+              <div className="p-4 border-b border-gray-50 flex items-center justify-between bg-gray-50/50">
+                <h3 className="font-black text-sm">الإشعارات</h3>
+                <button 
+                  onClick={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+                  className="text-[10px] font-bold text-emerald-600 hover:underline"
+                >
+                  تحديد الكل كمقروء
+                </button>
+              </div>
+              <div className="max-h-[300px] overflow-y-auto">
+                {notifications.length > 0 ? (
+                  notifications.map(n => (
+                    <div key={n.id} className={cn("p-4 border-b border-gray-50 flex gap-3 items-start transition-colors", !n.read && "bg-emerald-50/30")}>
+                      <div className={cn("w-2 h-2 rounded-full mt-1.5 shrink-0", !n.read ? "bg-emerald-500" : "bg-gray-200")} />
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-gray-800 leading-relaxed">{n.text}</p>
+                        <p className="text-[9px] font-bold text-gray-400 uppercase">{n.time}</p>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-8 text-center text-gray-400 text-xs">لا توجد إشعارات جديدة</div>
+                )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       <main className="max-w-md mx-auto px-4 py-6">
         {!isConfigured ? (
