@@ -1,0 +1,78 @@
+{
+  "entities": {
+    "Merchant": {
+      "title": "Merchant",
+      "description": "Store owner profile and settings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "User ID from Firebase Auth" },
+        "store_name": { "type": "string" },
+        "credits": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "store_name", "credits"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Store products",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "merchant_id": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "stock": { "type": "number" },
+        "image_url": { "type": "string" }
+      },
+      "required": ["merchant_id", "name", "price"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer orders",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "merchant_id": { "type": "string" },
+        "customer_name": { "type": "string" },
+        "customer_phone": { "type": "string" },
+        "city": { "type": "string" },
+        "district": { "type": "string" },
+        "total_amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "processing", "shipped", "delivered", "cancelled"] },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["merchant_id", "customer_name", "total_amount", "status"]
+    },
+    "OrderItem": {
+      "title": "OrderItem",
+      "description": "Items within an order",
+      "type": "object",
+      "properties": {
+        "order_id": { "type": "string" },
+        "product_id": { "type": "string" },
+        "product_name": { "type": "string" },
+        "quantity": { "type": "number" },
+        "price": { "type": "number" }
+      },
+      "required": ["order_id", "product_id", "quantity", "price"]
+    }
+  },
+  "firestore": {
+    "/merchants/{merchantId}": {
+      "schema": "Merchant",
+      "description": "Merchant profiles"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Product catalog"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer orders"
+    },
+    "/orders/{orderId}/items/{itemId}": {
+      "schema": "OrderItem",
+      "description": "Items in an order"
+    }
+  }
+}

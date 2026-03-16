@@ -19,9 +19,11 @@ import {
   Tooltip, 
   ResponsiveContainer 
 } from 'recharts';
-import { supabase } from '../lib/supabase';
+import { db } from '../lib/firebase';
+import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
+import { GoogleGenAI } from "@google/genai";
 
 const data = [
   { name: 'السبت', sales: 4000 },
@@ -53,7 +55,7 @@ const StatCard = ({ title, value, icon: Icon, trend, trendValue, color }: any) =
 );
 
 const Dashboard: React.FC = () => {
-  const { merchant } = useAuth();
+  const { user, merchant } = useAuth();
   const [stats, setStats] = useState({
     totalOrders: 0,
     totalRevenue: 0,
@@ -64,34 +66,55 @@ const Dashboard: React.FC = () => {
   const [loadingInsights, setLoadingInsights] = useState(false);
 
   useEffect(() => {
-    fetchStats();
-    fetchInsights();
-  }, [merchant]);
+    if (user) {
+      fetchStats();
+      fetchInsights();
+    }
+  }, [user, merchant]);
 
   const fetchStats = async () => {
-    if (!merchant) return;
-    const { data: orders } = await supabase.from('orders').select('*').eq('merchant_id', merchant.id);
+    if (!user) return;
+    const q = query(collection(db, 'orders'), where('merchant_id', '==', user.uid));
+    const snapshot = await getDocs(q);
+    const orders = snapshot.docs.map(doc => doc.data());
+    
     if (orders) {
       setStats({
         totalOrders: orders.length,
         totalRevenue: orders.reduce((acc, o) => acc + Number(o.total_amount), 0),
         activeCustomers: new Set(orders.map(o => o.customer_phone)).size,
-        pendingOrders: orders.filter(o => o.status === 'new').length
+        pendingOrders: orders.filter(o => o.status === 'pending').length
       });
     }
   };
 
   const fetchInsights = async () => {
-    if (!merchant) return;
+    if (!user) return;
     setLoadingInsights(true);
     try {
-      const res = await fetch('/api/ai/insights', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ merchantId: merchant.id })
+      const q = query(collection(db, 'orders'), where('merchant_id', '==', user.uid), limit(50));
+      const snapshot = await getDocs(q);
+      const orders = snapshot.docs.map(doc => doc.data());
+
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      
+      const prompt = `
+        Analyze this sales data for a merchant:
+        Orders: ${JSON.stringify(orders)}
+        
+        Generate 3 key insights in Arabic for the merchant dashboard.
+        Focus on: Best selling, stock recommendations, and revenue trends.
+        Return as a JSON array of strings.
+      `;
+
+      const result = await ai.models.generateContent({
+        model: "gemini-3.1-flash-lite-preview",
+        contents: [{ parts: [{ text: prompt }] }],
+        config: { responseMimeType: "application/json" }
       });
-      const data = await res.json();
-      if (data.insights) setInsights(data.insights);
+
+      const insightsData = JSON.parse(result.text || "[]");
+      setInsights(insightsData);
     } catch (error) {
       console.error("Failed to fetch insights", error);
     } finally {

@@ -13,10 +13,10 @@ import Login from './pages/Login';
 import Onboarding from './pages/Onboarding';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { session, loading, merchant } = useAuth();
+  const { user, loading, merchant } = useAuth();
 
   if (loading) return <div className="h-screen flex items-center justify-center">Loading...</div>;
-  if (!session) return <Navigate to="/login" />;
+  if (!user) return <Navigate to="/login" />;
   if (!merchant) return <Navigate to="/onboarding" />;
 
   return <>{children}</>;

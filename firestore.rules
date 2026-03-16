@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: merchants
+    // Fields: id, store_name, credits, created_at
+    //
+    // Collection: products
+    // Fields: merchant_id, name, price, stock, image_url
+    //
+    // Collection: orders
+    // Fields: merchant_id, customer_name, customer_phone, city, district, total_amount, status, created_at
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isMerchantOwner(merchantId) {
+      return isAuthenticated() && request.auth.uid == merchantId;
+    }
+
+    // Domain Validators
+    function isValidMerchant(data) {
+      return data.keys().hasAll(['id', 'store_name', 'credits']) &&
+             data.store_name is string && data.store_name.size() > 0 &&
+             data.credits is number && data.credits >= 0;
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['merchant_id', 'name', 'price']) &&
+             data.merchant_id is string &&
+             data.name is string && data.name.size() > 0 &&
+             data.price is number && data.price >= 0;
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll(['merchant_id', 'customer_name', 'total_amount', 'status']) &&
+             data.merchant_id is string &&
+             data.customer_name is string && data.customer_name.size() > 0 &&
+             data.total_amount is number && data.total_amount >= 0 &&
+             data.status in ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
+    }
+
+    match /merchants/{merchantId} {
+      allow read: if isAuthenticated();
+      allow create: if isMerchantOwner(merchantId) && isValidMerchant(request.resource.data);
+      allow update: if isMerchantOwner(merchantId) && isValidMerchant(request.resource.data);
+    }
+
+    match /products/{productId} {
+      allow read: if true; // Publicly readable for customers
+      allow create: if isAuthenticated() && isMerchantOwner(request.resource.data.merchant_id) && isValidProduct(request.resource.data);
+      allow update: if isAuthenticated() && isMerchantOwner(resource.data.merchant_id) && isValidProduct(request.resource.data);
+      allow delete: if isAuthenticated() && isMerchantOwner(resource.data.merchant_id);
+    }
+
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (isMerchantOwner(resource.data.merchant_id) || isMerchantOwner(request.auth.uid));
+      allow create: if isAuthenticated() && isMerchantOwner(request.resource.data.merchant_id) && isValidOrder(request.resource.data);
+      allow update: if isAuthenticated() && isMerchantOwner(resource.data.merchant_id) && isValidOrder(request.resource.data);
+      
+      match /items/{itemId} {
+        allow read, write: if isAuthenticated();
+      }
+    }
+  }
+}

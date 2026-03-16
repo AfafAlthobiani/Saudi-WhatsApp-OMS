@@ -9,51 +9,58 @@ import {
   MoreVertical,
   MessageSquare
 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { db } from '../lib/firebase';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
 
 const Customers: React.FC = () => {
-  const { merchant } = useAuth();
+  const { user } = useAuth();
   const [customers, setCustomers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchCustomers();
-  }, [merchant]);
+    if (user) {
+      fetchCustomers();
+    }
+  }, [user]);
 
   const fetchCustomers = async () => {
-    if (!merchant) return;
+    if (!user) return;
     setLoading(true);
-    // Group orders by customer phone to get unique customers
-    const { data: orders } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('merchant_id', merchant.id);
-    
-    if (orders) {
-      const customerMap = new Map();
-      orders.forEach(o => {
-        if (!customerMap.has(o.customer_phone)) {
-          customerMap.set(o.customer_phone, {
-            name: o.customer_name,
-            phone: o.customer_phone,
-            city: o.city,
-            totalOrders: 0,
-            totalSpent: 0,
-            lastOrder: o.created_at
-          });
-        }
-        const c = customerMap.get(o.customer_phone);
-        c.totalOrders += 1;
-        c.totalSpent += Number(o.total_amount);
-        if (new Date(o.created_at) > new Date(c.lastOrder)) {
-          c.lastOrder = o.created_at;
-        }
-      });
-      setCustomers(Array.from(customerMap.values()));
+    try {
+      const q = query(collection(db, 'orders'), where('merchant_id', '==', user.uid));
+      const snapshot = await getDocs(q);
+      const orders = snapshot.docs.map(doc => doc.data());
+      
+      if (orders) {
+        const customerMap = new Map();
+        orders.forEach(o => {
+          if (!customerMap.has(o.customer_phone)) {
+            customerMap.set(o.customer_phone, {
+              name: o.customer_name,
+              phone: o.customer_phone,
+              city: o.city,
+              totalOrders: 0,
+              totalSpent: 0,
+              lastOrder: o.created_at?.toDate?.() || new Date(o.created_at)
+            });
+          }
+          const c = customerMap.get(o.customer_phone);
+          c.totalOrders += 1;
+          c.totalSpent += Number(o.total_amount);
+          const orderDate = o.created_at?.toDate?.() || new Date(o.created_at);
+          if (orderDate > c.lastOrder) {
+            c.lastOrder = orderDate;
+          }
+        });
+        setCustomers(Array.from(customerMap.values()));
+      }
+    } catch (error) {
+      console.error("Error fetching customers:", error);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (

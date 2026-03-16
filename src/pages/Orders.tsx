@@ -14,22 +14,25 @@ import {
   ArrowRight,
   ShoppingCart
 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { db } from '../lib/firebase';
+import { collection, query, where, orderBy, onSnapshot, addDoc, updateDoc, doc, getDocs, serverTimestamp, increment } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { generateZatcaInvoice } from '../lib/invoice';
 import { cn } from '../lib/utils';
+import { parseWhatsAppMessage, verifyLocation } from '../services/gemini';
 
-type OrderStatus = 'new' | 'preparing' | 'shipped' | 'delivered';
+type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
 
-const STATUS_CONFIG = {
-  new: { label: 'جديد', color: 'bg-blue-500', icon: Clock },
-  preparing: { label: 'قيد التجهيز', color: 'bg-orange-500', icon: Clock },
+const STATUS_CONFIG: Record<OrderStatus, { label: string, color: string, icon: any }> = {
+  pending: { label: 'جديد', color: 'bg-blue-500', icon: Clock },
+  processing: { label: 'قيد التجهيز', color: 'bg-orange-500', icon: Clock },
   shipped: { label: 'تم الشحن', color: 'bg-purple-500', icon: Truck },
   delivered: { label: 'تم التوصيل', color: 'bg-green-500', icon: CheckCircle2 },
+  cancelled: { label: 'ملغي', color: 'bg-red-500', icon: CheckCircle2 },
 };
 
 const Orders: React.FC = () => {
-  const { merchant } = useAuth();
+  const { user, merchant } = useAuth();
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<OrderStatus | 'all'>('all');
@@ -39,65 +42,71 @@ const Orders: React.FC = () => {
   const [simLoading, setSimLoading] = useState(false);
 
   useEffect(() => {
-    fetchOrders();
-    
-    const channel = supabase
-      .channel('orders-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-        fetchOrders();
-      })
-      .subscribe();
+    if (!user) return;
 
-    return () => { supabase.removeChannel(channel); };
-  }, [merchant]);
+    const q = query(
+      collection(db, 'orders'),
+      where('merchant_id', '==', user.uid),
+      orderBy('created_at', 'desc')
+    );
 
-  const fetchOrders = async () => {
-    if (!merchant) return;
-    setLoading(true);
-    const { data } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('merchant_id', merchant.id)
-      .order('created_at', { ascending: false });
-    if (data) setOrders(data);
-    setLoading(false);
-  };
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const ordersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setOrders(ordersData);
+      setLoading(false);
+    }, (error) => {
+      console.error("Orders snapshot error:", error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   const updateStatus = async (orderId: string, status: OrderStatus) => {
-    await supabase.from('orders').update({ status }).eq('id', orderId);
+    const orderRef = doc(db, 'orders', orderId);
+    await updateDoc(orderRef, { status });
   };
 
   const handleSimulate = async () => {
-    if (!simMessage || !merchant) return;
+    if (!simMessage || !user || !merchant) return;
     setSimLoading(true);
     try {
-      const res = await fetch('/api/ai/parse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: simMessage, merchantId: merchant.id })
-      });
-      const extracted = await res.json();
+      // 1. Parse message with Gemini 3.1 Flash Lite (Fast)
+      const extracted = await parseWhatsAppMessage(simMessage);
       
-      if (extracted.error) throw new Error(extracted.error);
+      // 2. Ground location with Gemini 2.5 Flash (Maps Grounding)
+      if (extracted.city && extracted.district) {
+        const locationData = await verifyLocation(extracted.city, extracted.district);
+        console.log("Location verification:", locationData);
+      }
 
-      // Create order in DB
-      const total = 150; // Mock total for demo
+      // 3. Check credits
+      if (merchant.credits < 1) throw new Error("رصيدك غير كافٍ");
+
+      // 4. Create order in Firestore
+      const total = 150; // Mock total
       const vat = total * 0.15;
       
-      const { data: order } = await supabase.from('orders').insert({
-        merchant_id: merchant.id,
-        customer_name: extracted.customer_name,
+      await addDoc(collection(db, 'orders'), {
+        merchant_id: user.uid,
+        customer_name: extracted.customer_name || "عميل غير معروف",
         customer_phone: extracted.customer_phone || "966500000000",
-        city: extracted.city,
-        district: extracted.district,
+        city: extracted.city || "غير محدد",
+        district: extracted.district || "غير محدد",
         total_amount: total,
         vat_amount: vat,
-        status: 'new'
-      }).select().single();
+        status: 'pending',
+        created_at: serverTimestamp()
+      });
+
+      // 5. Deduct credit
+      const merchantRef = doc(db, 'merchants', user.uid);
+      await updateDoc(merchantRef, {
+        credits: increment(-1)
+      });
 
       setShowSimulate(false);
       setSimMessage('');
-      fetchOrders();
     } catch (error: any) {
       alert(error.message);
     } finally {
@@ -106,14 +115,17 @@ const Orders: React.FC = () => {
   };
 
   const handleDownloadInvoice = async (order: any) => {
-    const { data: items } = await supabase.from('order_items').select('*, products(name)').eq('order_id', order.id);
+    // Fetch items from subcollection
+    const itemsSnap = await getDocs(collection(db, 'orders', order.id, 'items'));
+    const items = itemsSnap.docs.map(d => d.data());
+
     const invoiceData = {
-      merchantName: merchant.name,
-      vatNumber: merchant.vat_number || "300000000000003",
-      invoiceDate: order.created_at,
+      merchantName: merchant?.name || "تاجر مدى",
+      vatNumber: merchant?.vat_number || "300000000000003",
+      invoiceDate: order.created_at?.toDate?.() || new Date(order.created_at),
       totalAmount: Number(order.total_amount),
       vatAmount: Number(order.vat_amount),
-      items: items?.map(i => ({ name: i.products.name, quantity: i.quantity, price: Number(i.price) })) || [
+      items: items.length > 0 ? items.map(i => ({ name: i.product_name, quantity: i.quantity, price: Number(i.price) })) : [
         { name: "منتج تجريبي", quantity: 1, price: Number(order.total_amount) - Number(order.vat_amount) }
       ]
     };
@@ -126,7 +138,7 @@ const Orders: React.FC = () => {
 
   const filteredOrders = orders.filter(o => {
     const matchesTab = activeTab === 'all' || o.status === activeTab;
-    const matchesSearch = o.customer_name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    const matchesSearch = o.customer_name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           o.id.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesTab && matchesSearch;
   });
@@ -149,7 +161,7 @@ const Orders: React.FC = () => {
 
       {/* Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-2">
-        {(['all', 'new', 'preparing', 'shipped', 'delivered'] as const).map((tab) => (
+        {(['all', 'pending', 'processing', 'shipped', 'delivered'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -246,7 +258,13 @@ const Orders: React.FC = () => {
                       {order.status !== 'delivered' && (
                         <button 
                           onClick={() => {
-                            const next: Record<OrderStatus, OrderStatus> = { new: 'preparing', preparing: 'shipped', shipped: 'delivered', delivered: 'delivered' };
+                            const next: Record<OrderStatus, OrderStatus> = { 
+                              pending: 'processing', 
+                              processing: 'shipped', 
+                              shipped: 'delivered', 
+                              delivered: 'delivered',
+                              cancelled: 'cancelled'
+                            };
                             updateStatus(order.id, next[order.status as OrderStatus]);
                           }}
                           className="bg-gray-900 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all active:scale-95"

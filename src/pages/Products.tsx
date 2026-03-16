@@ -11,12 +11,13 @@ import {
   DollarSign,
   Layers
 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { db } from '../lib/firebase';
+import { collection, query, where, getDocs, addDoc, deleteDoc, doc, orderBy, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
 
 const Products: React.FC = () => {
-  const { merchant } = useAuth();
+  const { user } = useAuth();
   const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -24,37 +25,59 @@ const Products: React.FC = () => {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetchProducts();
-  }, [merchant]);
+    if (user) {
+      fetchProducts();
+    }
+  }, [user]);
 
   const fetchProducts = async () => {
+    if (!user) return;
     setLoading(true);
-    const { data } = await supabase.from('products').select('*').order('created_at', { ascending: false });
-    if (data) setProducts(data);
-    setLoading(false);
+    try {
+      const q = query(
+        collection(db, 'products'), 
+        where('merchant_id', '==', user.uid),
+        orderBy('created_at', 'desc')
+      );
+      const snapshot = await getDocs(q);
+      setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    } catch (error) {
+      console.error("Error fetching products:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleAdd = async () => {
-    if (!newProduct.name || !newProduct.price) return;
+    if (!user || !newProduct.name || !newProduct.price) return;
     setSaving(true);
-    const { error } = await supabase.from('products').insert({
-      name: newProduct.name,
-      price: Number(newProduct.price),
-      stock: Number(newProduct.stock) || 0,
-      threshold: Number(newProduct.threshold) || 5
-    });
-    if (!error) {
+    try {
+      await addDoc(collection(db, 'products'), {
+        merchant_id: user.uid,
+        name: newProduct.name,
+        price: Number(newProduct.price),
+        stock: Number(newProduct.stock) || 0,
+        threshold: Number(newProduct.threshold) || 5,
+        created_at: serverTimestamp()
+      });
       setShowAdd(false);
       setNewProduct({ name: '', price: '', stock: '', threshold: '5' });
       fetchProducts();
+    } catch (error) {
+      console.error("Error adding product:", error);
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const handleDelete = async (id: string) => {
     if (window.confirm('هل أنت متأكد من حذف هذا المنتج؟')) {
-      await supabase.from('products').delete().eq('id', id);
-      fetchProducts();
+      try {
+        await deleteDoc(doc(db, 'products', id));
+        fetchProducts();
+      } catch (error) {
+        console.error("Error deleting product:", error);
+      }
     }
   };
 

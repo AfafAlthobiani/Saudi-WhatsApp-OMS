@@ -1,32 +1,35 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Smartphone, CheckCircle2, ArrowRight, Store, MessageSquare, Zap } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { db } from '../lib/firebase';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
 const Onboarding: React.FC = () => {
-  const { session, refreshMerchant } = useAuth();
+  const { user, refreshMerchant } = useAuth();
   const [step, setStep] = useState(1);
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleComplete = async () => {
-    if (!name || !session) return;
+    if (!name || !user) return;
     setLoading(true);
-    const { error } = await supabase.from('merchants').insert({
-      id: session.user.id,
-      name,
-      credits: 10, // Free trial credits
-      vat_number: "300000000000003"
-    });
-    
-    if (!error) {
+    try {
+      await setDoc(doc(db, 'merchants', user.uid), {
+        name,
+        credits: 10, // Free trial credits
+        vat_number: "300000000000003",
+        created_at: serverTimestamp()
+      });
       await refreshMerchant();
       navigate('/');
+    } catch (error) {
+      console.error("Error completing onboarding:", error);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (

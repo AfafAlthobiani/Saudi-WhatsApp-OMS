@@ -13,7 +13,7 @@ import {
   X
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabase';
+import { logout } from '../lib/firebase';
 import { cn } from '../lib/utils';
 
 const SidebarItem = ({ to, icon: Icon, label, active }: { to: string, icon: any, label: string, active: boolean }) => (
@@ -36,7 +36,7 @@ const Layout: React.FC = () => {
   const { merchant } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
 
-  const handleLogout = () => supabase.auth.signOut();
+  const handleLogout = () => logout();
 
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: "الرئيسية" },

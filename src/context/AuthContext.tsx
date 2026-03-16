@@ -1,53 +1,67 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
-import { Session } from '@supabase/supabase-js';
+import { auth, db } from '../lib/firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 
 interface AuthContextType {
-  session: Session | null;
+  user: User | null;
   loading: boolean;
   merchant: any | null;
   refreshMerchant: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
-  session: null,
+  user: null,
   loading: true,
   merchant: null,
   refreshMerchant: async () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [merchant, setMerchant] = useState<any | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) fetchMerchant(session.user.id);
-      setLoading(false);
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      setUser(user);
+      if (user) {
+        // Listen to merchant data in real-time
+        const merchantRef = doc(db, 'merchants', user.uid);
+        const unsubscribeMerchant = onSnapshot(merchantRef, (doc) => {
+          if (doc.exists()) {
+            setMerchant({ id: doc.id, ...doc.data() });
+          } else {
+            setMerchant(null);
+          }
+          setLoading(false);
+        }, (error) => {
+          console.error("Merchant snapshot error:", error);
+          setLoading(false);
+        });
+
+        return () => unsubscribeMerchant();
+      } else {
+        setMerchant(null);
+        setLoading(false);
+      }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) fetchMerchant(session.user.id);
-      else setMerchant(null);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => unsubscribeAuth();
   }, []);
 
-  const fetchMerchant = async (userId: string) => {
-    const { data } = await supabase.from('merchants').select('*').eq('id', userId).single();
-    if (data) setMerchant(data);
-  };
-
   const refreshMerchant = async () => {
-    if (session) await fetchMerchant(session.user.id);
+    if (user) {
+      const merchantRef = doc(db, 'merchants', user.uid);
+      const docSnap = await getDoc(merchantRef);
+      if (docSnap.exists()) {
+        setMerchant({ id: docSnap.id, ...docSnap.data() });
+      }
+    }
   };
 
   return (
-    <AuthContext.Provider value={{ session, loading, merchant, refreshMerchant }}>
+    <AuthContext.Provider value={{ user, loading, merchant, refreshMerchant }}>
       {children}
     </AuthContext.Provider>
   );
