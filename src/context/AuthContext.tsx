@@ -23,12 +23,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [merchant, setMerchant] = useState<any | null>(null);
 
   useEffect(() => {
+    let unsubscribeMerchant: (() => void) | null = null;
+
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setUser(user);
+      
+      if (unsubscribeMerchant) {
+        unsubscribeMerchant();
+        unsubscribeMerchant = null;
+      }
+
       if (user) {
         // Listen to merchant data in real-time
         const merchantRef = doc(db, 'merchants', user.uid);
-        const unsubscribeMerchant = onSnapshot(merchantRef, (doc) => {
+        unsubscribeMerchant = onSnapshot(merchantRef, (doc) => {
           if (doc.exists()) {
             setMerchant({ id: doc.id, ...doc.data() });
           } else {
@@ -39,15 +47,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.error("Merchant snapshot error:", error);
           setLoading(false);
         });
-
-        return () => unsubscribeMerchant();
       } else {
         setMerchant(null);
         setLoading(false);
       }
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeMerchant) unsubscribeMerchant();
+    };
   }, []);
 
   const refreshMerchant = async () => {

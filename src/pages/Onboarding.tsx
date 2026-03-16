@@ -4,18 +4,21 @@ import { Smartphone, CheckCircle2, ArrowRight, Store, MessageSquare, Zap } from 
 import { db } from '../lib/firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 
 const Onboarding: React.FC = () => {
-  const { user, refreshMerchant } = useAuth();
+  const { user, loading, refreshMerchant } = useAuth();
   const [step, setStep] = useState(1);
   const [name, setName] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const navigate = useNavigate();
+
+  if (loading) return <div className="h-screen flex items-center justify-center">Loading...</div>;
+  if (!user) return <Navigate to="/login" />;
 
   const handleComplete = async () => {
     if (!name || !user) return;
-    setLoading(true);
+    setSaving(true);
     try {
       await setDoc(doc(db, 'merchants', user.uid), {
         name,
@@ -28,7 +31,7 @@ const Onboarding: React.FC = () => {
     } catch (error) {
       console.error("Error completing onboarding:", error);
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
@@ -143,10 +146,10 @@ const Onboarding: React.FC = () => {
 
               <button 
                 onClick={handleComplete}
-                disabled={loading}
+                disabled={saving}
                 className="w-full bg-emerald-600 text-white py-5 rounded-2xl font-black text-lg hover:bg-emerald-700 transition-all active:scale-95 shadow-xl shadow-emerald-200 flex items-center justify-center gap-3"
               >
-                {loading ? "جاري التجهيز..." : "ابدأ الآن"}
+                {saving ? "جاري التجهيز..." : "ابدأ الآن"}
                 <ArrowRight size={20} />
               </button>
             </div>

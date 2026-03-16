@@ -12,7 +12,7 @@ const Login: React.FC = () => {
     setLoading(true);
     try {
       await signInWithGoogle();
-      navigate('/dashboard');
+      navigate('/');
     } catch (error) {
       console.error("Login error:", error);
       alert('فشل تسجيل الدخول. يرجى المحاولة مرة أخرى.');

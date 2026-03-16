@@ -30,8 +30,8 @@ service cloud.firestore {
 
     // Domain Validators
     function isValidMerchant(data) {
-      return data.keys().hasAll(['id', 'store_name', 'credits']) &&
-             data.store_name is string && data.store_name.size() > 0 &&
+      return data.keys().hasAll(['name', 'credits']) &&
+             data.name is string && data.name.size() > 0 &&
              data.credits is number && data.credits >= 0;
     }
 

@@ -5,12 +5,12 @@
       "description": "Store owner profile and settings",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "User ID from Firebase Auth" },
-        "store_name": { "type": "string" },
+        "name": { "type": "string" },
         "credits": { "type": "number" },
+        "vat_number": { "type": "string" },
         "created_at": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "store_name", "credits"]
+      "required": ["name", "credits"]
     },
     "Product": {
       "title": "Product",
