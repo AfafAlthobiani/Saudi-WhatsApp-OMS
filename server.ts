@@ -15,15 +15,38 @@ const PORT = 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Initialize Clients
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+// Initialize Clients Lazily
+let openai: OpenAI | null = null;
+const getOpenAI = () => {
+  if (!openai) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) throw new Error("OPENAI_API_KEY is missing");
+    openai = new OpenAI({ apiKey });
+  }
+  return openai;
+};
+
+let twilioClient: any = null;
+const getTwilio = () => {
+  if (!twilioClient) {
+    const sid = process.env.TWILIO_ACCOUNT_SID;
+    const token = process.env.TWILIO_AUTH_TOKEN;
+    if (!sid || !token) throw new Error("Twilio credentials missing");
+    twilioClient = twilio(sid, token);
+  }
+  return twilioClient;
+};
+
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL || "",
   process.env.SUPABASE_SERVICE_ROLE_KEY || ""
 );
 
 // --- API Routes ---
+
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", supabase: !!process.env.VITE_SUPABASE_URL });
+});
 
 /**
  * WhatsApp Webhook Handler
@@ -38,6 +61,9 @@ app.post("/api/whatsapp/webhook", async (req, res) => {
   console.log(`[WhatsApp] Message from ${From}: ${Body}`);
 
   try {
+    const ai = getOpenAI();
+    const twilio = getTwilio();
+
     // 1. Ensure a merchant exists (Auto-setup for demo)
     let { data: merchant } = await supabase.from("merchants").select("*").limit(1).single();
     
@@ -54,14 +80,14 @@ app.post("/api/whatsapp/webhook", async (req, res) => {
     }
 
     // 2. AI Parsing with OpenAI
-    const completion = await openai.chat.completions.create({
+    const completion = await ai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: `You are an AI order assistant for a Saudi merchant. 
-          Extract order details from the message. 
-          Respond ONLY with a JSON object:
+          content: `أنت مساعد ذكي لإدارة الطلبات لتاجر سعودي. 
+          استخرج تفاصيل الطلب من الرسالة. 
+          أجب فقط بكائن JSON:
           {
             "customer_name": string | null,
             "city": string | null,
@@ -115,8 +141,8 @@ app.post("/api/whatsapp/webhook", async (req, res) => {
     }
 
     if (itemsToInsert.length === 0) {
-      await twilioClient.messages.create({
-        body: `Sorry, we couldn't find those products or they are out of stock. Please check our catalog.`,
+      await twilio.messages.create({
+        body: `عذراً، لم نتمكن من العثور على هذه المنتجات أو أنها غير متوفرة حالياً. يرجى التحقق من الكتالوج الخاص بنا.`,
         from: process.env.TWILIO_PHONE_NUMBER,
         to: From
       });
@@ -150,10 +176,10 @@ app.post("/api/whatsapp/webhook", async (req, res) => {
 
     // 6. Confirmation
     const msg = lastOrder 
-      ? `Welcome back ${name}! Order #${order.id.slice(0,8)} received. Total: ${total.toFixed(2)} SAR (incl. VAT).`
-      : `Thanks ${name}! Order #${order.id.slice(0,8)} received. Total: ${total.toFixed(2)} SAR (incl. VAT). We'll notify you when it ships.`;
+      ? `أهلاً بك مجدداً يا ${name}! تم استلام طلبك رقم #${order.id.slice(0,8)}. الإجمالي: ${total.toFixed(2)} ر.س (شامل الضريبة).`
+      : `شكراً لك يا ${name}! تم استلام طلبك رقم #${order.id.slice(0,8)}. الإجمالي: ${total.toFixed(2)} ر.س (شامل الضريبة). سنقوم بإشعارك عند الشحن.`;
 
-    await twilioClient.messages.create({
+    await twilio.messages.create({
       body: msg,
       from: process.env.TWILIO_PHONE_NUMBER,
       to: From
@@ -173,6 +199,7 @@ app.post("/api/orders/:id/ship", async (req, res) => {
   const { id } = req.params;
   
   try {
+    const twilio = getTwilio();
     // Mock Aramex/SMSA call
     const trackingNumber = `SA${Math.floor(Math.random() * 1000000000)}`;
     const labelUrl = `https://mock-shipping.com/labels/${trackingNumber}.pdf`;
@@ -190,8 +217,8 @@ app.post("/api/orders/:id/ship", async (req, res) => {
 
     if (order) {
       // Send WhatsApp notification
-      await twilioClient.messages.create({
-        body: `Good news! Your order ${order.id} has been shipped. Tracking: ${trackingNumber}. Link: https://track.smsa.com/${trackingNumber}`,
+      await twilio.messages.create({
+        body: `بشرى سارة! تم شحن طلبك رقم ${order.id}. رقم التتبع: ${trackingNumber}. الرابط: https://track.smsa.com/${trackingNumber}`,
         from: process.env.TWILIO_PHONE_NUMBER,
         to: order.customer_phone
       });

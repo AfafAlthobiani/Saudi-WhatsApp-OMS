@@ -41,10 +41,10 @@ interface Order {
 }
 
 const STATUS_CONFIG = {
-  new: { label: 'New', color: 'bg-blue-500', icon: Clock },
-  preparing: { label: 'Preparing', color: 'bg-orange-500', icon: Package },
-  shipped: { label: 'Shipped', color: 'bg-purple-500', icon: Truck },
-  delivered: { label: 'Delivered', color: 'bg-green-500', icon: CheckCircle2 },
+  new: { label: 'جديد', color: 'bg-blue-500', icon: Clock },
+  preparing: { label: 'قيد التجهيز', color: 'bg-orange-500', icon: Package },
+  shipped: { label: 'تم الشحن', color: 'bg-purple-500', icon: Truck },
+  delivered: { label: 'تم التوصيل', color: 'bg-green-500', icon: CheckCircle2 },
 };
 
 export default function App() {
@@ -54,8 +54,16 @@ export default function App() {
   const [view, setView] = useState<'dashboard' | 'products' | 'settings'>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
   const [merchant, setMerchant] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const isConfigured = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
 
   useEffect(() => {
+    if (!isConfigured) {
+      setLoading(false);
+      return;
+    }
+
     fetchOrders();
     fetchMerchant();
 
@@ -73,19 +81,32 @@ export default function App() {
   }, []);
 
   const fetchMerchant = async () => {
-    const { data } = await supabase.from('merchants').select('*').limit(1).single();
-    if (data) setMerchant(data);
+    try {
+      const { data, error } = await supabase.from('merchants').select('*').limit(1).single();
+      if (error) throw error;
+      if (data) setMerchant(data);
+    } catch (err: any) {
+      console.error("Error fetching merchant:", err);
+    }
   };
 
   const fetchOrders = async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from('orders')
-      .select('*')
-      .order('created_at', { ascending: false });
-    
-    if (data) setOrders(data);
-    setLoading(false);
+    setError(null);
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      if (data) setOrders(data);
+    } catch (err: any) {
+      console.error("Error fetching orders:", err);
+      setError(err.message || "Failed to fetch orders");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleGenerateInvoice = async (order: Order) => {
@@ -150,14 +171,14 @@ export default function App() {
   });
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] text-[#1A1A1A] font-sans pb-24">
+    <div className="min-h-screen bg-[#F8F9FA] text-[#1A1A1A] font-sans pb-24" dir="rtl">
       {/* Mobile Header */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-gray-100 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center shadow-lg shadow-emerald-200">
             <Smartphone className="text-white w-5 h-5" />
           </div>
-          <h1 className="font-bold text-lg tracking-tight">Mada OMS</h1>
+          <h1 className="font-bold text-lg tracking-tight">مدى OMS</h1>
         </div>
         <div className="flex items-center gap-3">
           <button className="p-2 text-gray-400 hover:text-emerald-600 transition-colors relative">
@@ -171,26 +192,54 @@ export default function App() {
       </header>
 
       <main className="max-w-md mx-auto px-4 py-6">
-        {view === 'dashboard' && (
+        {!isConfigured ? (
+          <div className="text-center py-20 space-y-4">
+            <div className="w-20 h-20 bg-orange-50 rounded-full flex items-center justify-center mx-auto">
+              <Smartphone className="w-10 h-10 text-orange-500" />
+            </div>
+            <h2 className="text-xl font-bold">مطلوب الإعداد</h2>
+            <p className="text-gray-500 text-sm px-8">
+              يرجى تكوين بيانات Supabase في لوحة الأسرار لبدء إدارة الطلبات.
+            </p>
+            <div className="bg-gray-50 p-4 rounded-2xl text-left text-xs font-mono space-y-2" dir="ltr">
+              <p>VITE_SUPABASE_URL</p>
+              <p>VITE_SUPABASE_ANON_KEY</p>
+            </div>
+          </div>
+        ) : error ? (
+          <div className="text-center py-20 space-y-4">
+            <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto">
+              <Package className="w-10 h-10 text-red-500" />
+            </div>
+            <h2 className="text-xl font-bold">خطأ في الاتصال</h2>
+            <p className="text-gray-500 text-sm">{error}</p>
+            <button 
+              onClick={fetchOrders}
+              className="bg-emerald-600 text-white px-6 py-2 rounded-xl font-bold text-sm"
+            >
+              إعادة المحاولة
+            </button>
+          </div>
+        ) : view === 'dashboard' && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
             {/* Stats Bento Grid */}
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm">
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Total Sales</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">إجمالي المبيعات</p>
                 <p className="text-2xl font-black text-emerald-600">
                   {orders.reduce((acc, o) => acc + Number(o.total_amount), 0).toLocaleString()} 
-                  <span className="text-xs font-medium ml-1">SAR</span>
+                  <span className="text-xs font-medium mr-1">ر.س</span>
                 </p>
               </div>
               <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm">
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Active</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">الطلبات النشطة</p>
                 <p className="text-2xl font-black">{orders.filter(o => o.status !== 'delivered').length}</p>
               </div>
             </div>
 
             {/* Tab Navigation */}
             <div className="flex items-center justify-between mb-4">
-              <div className="flex gap-2 overflow-x-auto no-scrollbar flex-1 mr-2">
+              <div className="flex gap-2 overflow-x-auto no-scrollbar flex-1 ml-2">
                 {(['all', 'new', 'preparing', 'shipped', 'delivered'] as const).map((tab) => (
                   <button
                     key={tab}
@@ -202,7 +251,7 @@ export default function App() {
                         : "bg-white text-gray-500 border-gray-100 hover:border-emerald-200"
                     )}
                   >
-                    {tab === 'all' ? 'All Orders' : STATUS_CONFIG[tab].label}
+                    {tab === 'all' ? 'الكل' : STATUS_CONFIG[tab].label}
                   </button>
                 ))}
               </div>
@@ -220,13 +269,13 @@ export default function App() {
 
             {/* Search Bar */}
             <div className="relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Search className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input 
                 type="text" 
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search customer or ID..." 
-                className="w-full bg-white border border-gray-100 rounded-2xl py-4 pl-12 pr-4 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 transition-all shadow-sm"
+                placeholder="بحث عن عميل أو رقم طلب..." 
+                className="w-full bg-white border border-gray-100 rounded-2xl py-4 pr-12 pl-4 text-sm focus:outline-none focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 transition-all shadow-sm"
               />
             </div>
 
@@ -248,7 +297,7 @@ export default function App() {
                   <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
                     <Package className="w-8 h-8 text-gray-200" />
                   </div>
-                  <p className="text-gray-400 text-sm font-medium">No orders found.</p>
+                  <p className="text-gray-400 text-sm font-medium">لا توجد طلبات.</p>
                 </div>
               )}
             </div>
@@ -258,7 +307,7 @@ export default function App() {
         {view === 'products' && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-black tracking-tight">Inventory</h2>
+              <h2 className="text-2xl font-black tracking-tight">المخزون</h2>
               <button className="bg-emerald-600 text-white w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-100">
                 <Plus className="w-6 h-6" />
               </button>
@@ -266,9 +315,9 @@ export default function App() {
             
             <div className="grid gap-3">
               {[
-                { name: 'Oud Perfume', stock: 12, price: 150 },
-                { name: 'Saffron 10g', stock: 3, price: 85 },
-                { name: 'Arabic Coffee', stock: 45, price: 45 },
+                { name: 'عطر عود فاخر', stock: 12, price: 150 },
+                { name: 'زعفران 10 جرام', stock: 3, price: 85 },
+                { name: 'قهوة عربية', stock: 45, price: 45 },
               ].map((product, i) => (
                 <div key={i} className="bg-white p-5 rounded-3xl border border-gray-100 flex items-center justify-between shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex items-center gap-4">
@@ -277,14 +326,14 @@ export default function App() {
                     </div>
                     <div>
                       <p className="font-bold text-base">{product.name}</p>
-                      <p className="text-xs font-bold text-emerald-600 bg-emerald-50 inline-block px-2 py-0.5 rounded-full">{product.price} SAR</p>
+                      <p className="text-xs font-bold text-emerald-600 bg-emerald-50 inline-block px-2 py-0.5 rounded-full">{product.price} ر.س</p>
                     </div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-left">
                     <p className={cn("text-sm font-black", product.stock < 5 ? "text-red-500" : "text-gray-900")}>
-                      {product.stock} <span className="text-[10px] font-bold text-gray-400 uppercase">units</span>
+                      {product.stock} <span className="text-[10px] font-bold text-gray-400 uppercase">قطعة</span>
                     </p>
-                    {product.stock < 5 && <p className="text-[10px] font-bold text-red-400 uppercase tracking-tighter">Low Stock</p>}
+                    {product.stock < 5 && <p className="text-[10px] font-bold text-red-400 uppercase tracking-tighter">مخزون منخفض</p>}
                   </div>
                 </div>
               ))}
@@ -294,11 +343,11 @@ export default function App() {
 
         {view === 'settings' && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-            <h2 className="text-2xl font-black tracking-tight">Settings</h2>
+            <h2 className="text-2xl font-black tracking-tight">الإعدادات</h2>
             <div className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm space-y-6">
               <div className="space-y-4">
                 <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Merchant Name</label>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">اسم المتجر</label>
                   <input 
                     type="text" 
                     value={merchant?.name || ''} 
@@ -307,7 +356,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">VAT Number</label>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">الرقم الضريبي</label>
                   <input 
                     type="text" 
                     value={merchant?.vat_number || ''} 
@@ -318,7 +367,7 @@ export default function App() {
               </div>
               <div className="pt-4 border-t border-gray-50">
                 <button className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold text-sm shadow-lg shadow-emerald-100 active:scale-95 transition-transform">
-                  Update Profile
+                  تحديث الملف الشخصي
                 </button>
               </div>
             </div>
@@ -328,15 +377,15 @@ export default function App() {
 
       {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-lg border-t border-gray-100 px-6 py-4 flex items-center justify-between z-50">
-        <NavButton icon={LayoutDashboard} label="Home" active={view === 'dashboard'} onClick={() => setView('dashboard')} />
-        <NavButton icon={Package} label="Inventory" active={view === 'products'} onClick={() => setView('products')} />
+        <NavButton icon={LayoutDashboard} label="الرئيسية" active={view === 'dashboard'} onClick={() => setView('dashboard')} />
+        <NavButton icon={Package} label="المخزون" active={view === 'products'} onClick={() => setView('products')} />
         <div className="relative -top-10">
           <button className="w-16 h-16 bg-emerald-600 rounded-3xl flex items-center justify-center shadow-xl shadow-emerald-200 text-white hover:bg-emerald-700 transition-all active:scale-90 rotate-45">
             <Plus className="w-8 h-8 -rotate-45" />
           </button>
         </div>
-        <NavButton icon={FileText} label="Settings" active={view === 'settings'} onClick={() => setView('settings')} />
-        <NavButton icon={User} label="Profile" />
+        <NavButton icon={FileText} label="الإعدادات" active={view === 'settings'} onClick={() => setView('settings')} />
+        <NavButton icon={User} label="الملف الشخصي" />
       </nav>
     </div>
   );
@@ -370,7 +419,7 @@ function OrderCard({ order, onStatusChange, onGenerateInvoice }: { order: Order,
           </div>
           <div>
             <h3 className="font-black text-sm tracking-tight">#{order.id.slice(0, 8).toUpperCase()}</h3>
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{new Date(order.created_at).toLocaleDateString('en-GB')}</p>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{new Date(order.created_at).toLocaleDateString('ar-SA')}</p>
           </div>
         </div>
         <div className={cn("px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border", config.color.replace('bg-', 'text-').replace('500', '600'), config.color.replace('bg-', 'bg-') + '/10', config.color.replace('bg-', 'border-') + '/20')}>
@@ -383,17 +432,17 @@ function OrderCard({ order, onStatusChange, onGenerateInvoice }: { order: Order,
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg">{order.customer_phone}</span>
           <p className="text-[10px] font-bold text-gray-400 flex items-center gap-1 uppercase tracking-tighter">
-            <Truck className="w-3 h-3" /> {order.district}, {order.city}
+            <Truck className="w-3 h-3" /> {order.district}، {order.city}
           </p>
         </div>
       </div>
 
       <div className="flex items-center justify-between pt-4 border-t border-gray-50">
         <div>
-          <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest">Total Amount</p>
+          <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest">إجمالي المبلغ</p>
           <p className="font-black text-lg text-gray-900 leading-none mt-1">
             {Number(order.total_amount).toFixed(2)} 
-            <span className="text-[10px] font-bold text-gray-400 ml-1 uppercase">sar</span>
+            <span className="text-[10px] font-bold text-gray-400 mr-1 uppercase">ر.س</span>
           </p>
         </div>
         
@@ -413,7 +462,7 @@ function OrderCard({ order, onStatusChange, onGenerateInvoice }: { order: Order,
               className="flex items-center gap-2 bg-gray-900 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all active:scale-95 shadow-lg shadow-gray-200"
             >
               {STATUS_CONFIG[nextStatus].label}
-              <ArrowRight className="w-3 h-3" />
+              <ArrowRight className="w-3 h-3 rotate-180" />
             </button>
           )}
         </div>
