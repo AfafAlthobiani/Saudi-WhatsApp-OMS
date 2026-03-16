@@ -1,0 +1,5 @@
+{
+  "name": "Saudi WhatsApp OMS",
+  "description": "A lightweight Order Management System for Saudi merchants with WhatsApp AI parsing, ZATCA invoicing, and shipping integration.",
+  "requestFramePermissions": []
+}
