@@ -20,16 +20,36 @@ const Onboarding: React.FC = () => {
     if (!name || !user) return;
     setSaving(true);
     try {
-      await setDoc(doc(db, 'merchants', user.uid), {
+      const merchantData = {
         name,
         credits: 10, // Free trial credits
         vat_number: "300000000000003",
         created_at: serverTimestamp()
-      });
+      };
+      
+      try {
+        await setDoc(doc(db, 'merchants', user.uid), merchantData);
+      } catch (error) {
+        // Specific error handling for Firestore permissions
+        const errInfo = {
+          error: error instanceof Error ? error.message : String(error),
+          operationType: 'write',
+          path: `merchants/${user.uid}`,
+          authInfo: {
+            userId: user.uid,
+            email: user.email,
+            emailVerified: user.emailVerified,
+          }
+        };
+        console.error('Firestore Permission Error:', JSON.stringify(errInfo));
+        throw error;
+      }
+
       await refreshMerchant();
       navigate('/');
     } catch (error) {
       console.error("Error completing onboarding:", error);
+      alert("حدث خطأ أثناء إعداد المتجر. يرجى المحاولة مرة أخرى.");
     } finally {
       setSaving(false);
     }

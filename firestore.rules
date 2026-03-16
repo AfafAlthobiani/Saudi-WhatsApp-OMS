@@ -28,11 +28,17 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == merchantId;
     }
 
+    function isAdmin() {
+      return isAuthenticated() &&
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "AFAFALTHOBIANI@gmail.com" && request.auth.token.email_verified == true));
+    }
+
     // Domain Validators
     function isValidMerchant(data) {
       return data.keys().hasAll(['name', 'credits']) &&
              data.name is string && data.name.size() > 0 &&
-             data.credits is number && data.credits >= 0;
+             data.credits is number;
     }
 
     function isValidProduct(data) {
@@ -51,25 +57,26 @@ service cloud.firestore {
     }
 
     match /merchants/{merchantId} {
-      allow read: if isAuthenticated();
-      allow create: if isMerchantOwner(merchantId) && isValidMerchant(request.resource.data);
-      allow update: if isMerchantOwner(merchantId) && isValidMerchant(request.resource.data);
+      allow read: if isAuthenticated() && (request.auth.uid == merchantId || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == merchantId && isValidMerchant(request.resource.data);
+      allow update: if isAuthenticated() && request.auth.uid == merchantId && isValidMerchant(request.resource.data);
     }
 
     match /products/{productId} {
       allow read: if true; // Publicly readable for customers
-      allow create: if isAuthenticated() && isMerchantOwner(request.resource.data.merchant_id) && isValidProduct(request.resource.data);
-      allow update: if isAuthenticated() && isMerchantOwner(resource.data.merchant_id) && isValidProduct(request.resource.data);
-      allow delete: if isAuthenticated() && isMerchantOwner(resource.data.merchant_id);
+      allow create: if isAuthenticated() && request.resource.data.merchant_id == request.auth.uid && isValidProduct(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.merchant_id == request.auth.uid && isValidProduct(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.merchant_id == request.auth.uid;
     }
 
     match /orders/{orderId} {
-      allow read: if isAuthenticated() && (isMerchantOwner(resource.data.merchant_id) || isMerchantOwner(request.auth.uid));
-      allow create: if isAuthenticated() && isMerchantOwner(request.resource.data.merchant_id) && isValidOrder(request.resource.data);
-      allow update: if isAuthenticated() && isMerchantOwner(resource.data.merchant_id) && isValidOrder(request.resource.data);
+      allow read: if isAuthenticated() && (resource.data.merchant_id == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.merchant_id == request.auth.uid && isValidOrder(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.merchant_id == request.auth.uid && isValidOrder(request.resource.data);
       
       match /items/{itemId} {
-        allow read, write: if isAuthenticated();
+        allow read: if isAuthenticated() && (get(/databases/$(database)/documents/orders/$(orderId)).data.merchant_id == request.auth.uid || isAdmin());
+        allow write: if isAuthenticated() && get(/databases/$(database)/documents/orders/$(orderId)).data.merchant_id == request.auth.uid;
       }
     }
   }
