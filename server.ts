@@ -1,12 +1,15 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import * as dotenv from "dotenv";
-import { OpenAI } from "openai";
-import twilio from "twilio";
+import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import path from "path";
+import { fileURLToPath } from "url";
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 3000;
@@ -16,25 +19,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
 // Initialize Clients Lazily
-let openai: OpenAI | null = null;
-const getOpenAI = () => {
-  if (!openai) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY is missing");
-    openai = new OpenAI({ apiKey });
+let genAI: GoogleGenAI | null = null;
+const getGenAI = () => {
+  if (!genAI) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error("GEMINI_API_KEY is missing");
+    genAI = new GoogleGenAI({ apiKey });
   }
-  return openai;
-};
-
-let twilioClient: any = null;
-const getTwilio = () => {
-  if (!twilioClient) {
-    const sid = process.env.TWILIO_ACCOUNT_SID;
-    const token = process.env.TWILIO_AUTH_TOKEN;
-    if (!sid || !token) throw new Error("Twilio credentials missing");
-    twilioClient = twilio(sid, token);
-  }
-  return twilioClient;
+  return genAI;
 };
 
 const supabase = createClient(
@@ -49,204 +41,116 @@ app.get("/api/health", (req, res) => {
 });
 
 /**
- * WhatsApp Webhook Handler
+ * AI WhatsApp Message Parser
  */
-app.post("/api/whatsapp/webhook", async (req, res) => {
-  const { Body, From } = req.body;
-  
-  if (!Body || !From) {
-    return res.status(400).send("Missing Body or From");
-  }
-
-  console.log(`[WhatsApp] Message from ${From}: ${Body}`);
+app.post("/api/ai/parse", async (req, res) => {
+  const { message, merchantId } = req.body;
+  if (!message || !merchantId) return res.status(400).json({ error: "Missing message or merchantId" });
 
   try {
-    const ai = getOpenAI();
-    const twilio = getTwilio();
-
-    // 1. Ensure a merchant exists (Auto-setup for demo)
-    let { data: merchant } = await supabase.from("merchants").select("*").limit(1).single();
-    
-    if (!merchant) {
-      const { data: newMerchant, error: mError } = await supabase.from("merchants").insert({
-        name: "Mada Demo Store",
-        vat_number: "312345678901233",
-        phone_number: process.env.TWILIO_PHONE_NUMBER || "966500000000",
-        address: "Riyadh, Saudi Arabia"
-      }).select().single();
+    const ai = getGenAI();
+    const prompt = `
+      You are an AI order parser for "Mada OMS".
+      Extract order details from this WhatsApp message in Arabic: "${message}"
       
-      if (mError) throw mError;
-      merchant = newMerchant;
-    }
-
-    // 2. AI Parsing with OpenAI
-    const completion = await ai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `أنت مساعد ذكي لإدارة الطلبات لتاجر سعودي. 
-          استخرج تفاصيل الطلب من الرسالة. 
-          أجب فقط بكائن JSON:
-          {
-            "customer_name": string | null,
-            "city": string | null,
-            "district": string | null,
-            "items": [{ "product_name": string, "quantity": number }]
-          }`
-        },
-        { role: "user", content: Body }
-      ],
-      response_format: { type: "json_object" }
-    });
-
-    const extracted = JSON.parse(completion.choices[0].message.content || "{}");
-    
-    // 3. Repeat Customer Logic
-    const { data: lastOrder } = await supabase
-      .from("orders")
-      .select("customer_name, city, district")
-      .eq("customer_phone", From)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .single();
-
-    const name = extracted.customer_name || lastOrder?.customer_name || "Customer";
-    const city = extracted.city || lastOrder?.city || "Riyadh";
-    const district = extracted.district || lastOrder?.district || "Unknown";
-
-    // 4. Product Validation & Stock
-    let subtotal = 0;
-    const itemsToInsert = [];
-
-    for (const item of extracted.items || []) {
-      const { data: product } = await supabase
-        .from("products")
-        .select("*")
-        .ilike("name", `%${item.product_name}%`) // Flexible matching
-        .limit(1)
-        .single();
-
-      if (product && product.stock >= item.quantity) {
-        itemsToInsert.push({
-          product_id: product.id,
-          quantity: item.quantity,
-          price: product.price
-        });
-        subtotal += Number(product.price) * item.quantity;
-
-        // Update stock
-        await supabase.from("products").update({ stock: product.stock - item.quantity }).eq("id", product.id);
+      Return ONLY a JSON object with:
+      {
+        "customer_name": string,
+        "customer_phone": string (if found),
+        "city": string,
+        "district": string,
+        "items": [{ "product_name": string, "quantity": number }],
+        "notes": string
       }
-    }
+    `;
 
-    if (itemsToInsert.length === 0) {
-      await twilio.messages.create({
-        body: `عذراً، لم نتمكن من العثور على هذه المنتجات أو أنها غير متوفرة حالياً. يرجى التحقق من الكتالوج الخاص بنا.`,
-        from: process.env.TWILIO_PHONE_NUMBER,
-        to: From
-      });
-      return res.status(200).send("No items found");
-    }
-
-    // 5. Create Order
-    const vat = subtotal * 0.15;
-    const total = subtotal + vat;
-
-    const { data: order, error: oError } = await supabase
-      .from("orders")
-      .insert({
-        merchant_id: merchant.id,
-        customer_name: name,
-        customer_phone: From,
-        city,
-        district,
-        status: "new",
-        total_amount: total,
-        vat_amount: vat
-      })
-      .select()
-      .single();
-
-    if (oError) throw oError;
-
-    await supabase.from("order_items").insert(
-      itemsToInsert.map(item => ({ ...item, order_id: order.id }))
-    );
-
-    // 6. Confirmation
-    const msg = lastOrder 
-      ? `أهلاً بك مجدداً يا ${name}! تم استلام طلبك رقم #${order.id.slice(0,8)}. الإجمالي: ${total.toFixed(2)} ر.س (شامل الضريبة).`
-      : `شكراً لك يا ${name}! تم استلام طلبك رقم #${order.id.slice(0,8)}. الإجمالي: ${total.toFixed(2)} ر.س (شامل الضريبة). سنقوم بإشعارك عند الشحن.`;
-
-    await twilio.messages.create({
-      body: msg,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: From
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: [{ parts: [{ text: prompt }] }],
+      config: { responseMimeType: "application/json" }
     });
 
-    res.status(200).send("OK");
+    const extracted = JSON.parse(response.text || "{}");
+
+    // Check credits
+    const { data: merchant } = await supabase.from("merchants").select("credits").eq("id", merchantId).single();
+    if (!merchant || merchant.credits < 1) {
+      return res.status(403).json({ error: "Insufficient credits" });
+    }
+
+    // Deduct 1 credit
+    await supabase.from("merchants").update({ credits: merchant.credits - 1 }).eq("id", merchantId);
+
+    res.json(extracted);
   } catch (error) {
-    console.error("[Webhook Error]", error);
-    res.status(500).send("Internal Error");
+    console.error("AI Parse Error:", error);
+    res.status(500).json({ error: "Failed to parse message" });
   }
 });
 
 /**
- * Mock Shipping API
+ * AI Sales Agent Chat
  */
-app.post("/api/orders/:id/ship", async (req, res) => {
-  const { id } = req.params;
+app.post("/api/ai/chat", async (req, res) => {
+  const { message, history, products } = req.body;
   
   try {
-    const twilio = getTwilio();
-    // Mock Aramex/SMSA call
-    const trackingNumber = `SA${Math.floor(Math.random() * 1000000000)}`;
-    const labelUrl = `https://mock-shipping.com/labels/${trackingNumber}.pdf`;
+    const ai = getGenAI();
+    const systemInstruction = `
+      أنت مساعد مبيعات ذكي لمتجر يستخدم نظام "مدى OMS".
+      مهمتك هي مساعدة العملاء، الإجابة على أسئلتهم حول المنتجات، واقتراح منتجات إضافية.
+      المنتجات المتوفرة: ${JSON.stringify(products)}
+      كن مهذباً، ودوداً، واستخدم اللهجة السعودية البيضاء إذا أمكن.
+      إذا أراد العميل الطلب، اطلب منه تزويدك بالاسم والمدينة والحي.
+    `;
 
-    const { data: order, error } = await supabase
-      .from("orders")
-      .update({
-        status: "shipped",
-        tracking_number: trackingNumber,
-        shipping_label_url: labelUrl
-      })
-      .eq("id", id)
-      .select()
-      .single();
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: [{ parts: [{ text: message }] }],
+      config: { 
+        systemInstruction,
+        maxOutputTokens: 500 
+      }
+    });
 
-    if (order) {
-      // Send WhatsApp notification
-      await twilio.messages.create({
-        body: `بشرى سارة! تم شحن طلبك رقم ${order.id}. رقم التتبع: ${trackingNumber}. الرابط: https://track.smsa.com/${trackingNumber}`,
-        from: process.env.TWILIO_PHONE_NUMBER,
-        to: order.customer_phone
-      });
-    }
-
-    res.json({ success: true, trackingNumber, labelUrl });
+    res.json({ reply: response.text });
   } catch (error) {
-    res.status(500).json({ error: "Failed to ship order" });
+    res.status(500).json({ error: "Failed to chat" });
   }
 });
 
 /**
- * Daily Sales Summary Cron (Mocked as an endpoint for testing)
+ * AI Sales Insights
  */
-app.get("/api/cron/daily-summary", async (req, res) => {
-  // In a real app, this would be triggered by a cron job (e.g., Vercel Cron)
-  // We'll calculate today's sales for all merchants
-  const today = new Date().toISOString().split('T')[0];
+app.post("/api/ai/insights", async (req, res) => {
+  const { merchantId } = req.body;
+  
+  try {
+    const { data: orders } = await supabase.from("orders").select("*, order_items(*)").eq("merchant_id", merchantId);
+    const { data: products } = await supabase.from("products").select("*");
 
-  const { data: orders } = await supabase
-    .from("orders")
-    .select("*, merchants(name, phone_number)")
-    .gte("created_at", today);
+    const ai = getGenAI();
+    const prompt = `
+      Analyze this sales data for a merchant:
+      Orders: ${JSON.stringify(orders)}
+      Products: ${JSON.stringify(products)}
+      
+      Generate 3 key insights in Arabic for the merchant dashboard.
+      Focus on: Best selling, stock recommendations, and revenue trends.
+      Return as a JSON array of strings.
+    `;
 
-  // Group by merchant and send summary
-  // ... logic to aggregate and send via Twilio ...
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: [{ parts: [{ text: prompt }] }],
+      config: { responseMimeType: "application/json" }
+    });
 
-  res.json({ status: "Summary sent" });
+    const insights = JSON.parse(response.text || "[]");
+    res.json({ insights });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to generate insights" });
+  }
 });
 
 // --- Vite Integration ---
