@@ -48,7 +48,9 @@ const STATUS_CONFIG = {
 };
 
 export default function App() {
+  const [session, setSession] = useState<any>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<OrderStatus | 'all'>('all');
   const [view, setView] = useState<'dashboard' | 'products' | 'settings'>('dashboard');
@@ -59,13 +61,27 @@ export default function App() {
   const isConfigured = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
 
   useEffect(() => {
-    if (!isConfigured) {
+    // Check active session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!isConfigured || !session) {
       setLoading(false);
       return;
     }
 
     fetchOrders();
     fetchMerchant();
+    fetchProducts();
 
     // Real-time subscription
     const channel = supabase
@@ -90,6 +106,11 @@ export default function App() {
     }
   };
 
+  const fetchProducts = async () => {
+    const { data } = await supabase.from('products').select('*').order('name');
+    if (data) setProducts(data);
+  };
+
   const fetchOrders = async () => {
     setLoading(true);
     setError(null);
@@ -107,6 +128,20 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleLogin = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin
+      }
+    });
+    if (error) alert(error.message);
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
   };
 
   const handleGenerateInvoice = async (order: Order) => {
@@ -181,13 +216,19 @@ export default function App() {
           <h1 className="font-bold text-lg tracking-tight">مدى OMS</h1>
         </div>
         <div className="flex items-center gap-3">
+          {session && (
+            <button 
+              onClick={handleLogout}
+              className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+              title="تسجيل الخروج"
+            >
+              <User className="w-5 h-5" />
+            </button>
+          )}
           <button className="p-2 text-gray-400 hover:text-emerald-600 transition-colors relative">
             <Bell className="w-5 h-5" />
             <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
           </button>
-          <div className="w-8 h-8 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center overflow-hidden">
-            <User className="w-5 h-5 text-emerald-600" />
-          </div>
         </div>
       </header>
 
@@ -205,6 +246,23 @@ export default function App() {
               <p>VITE_SUPABASE_URL</p>
               <p>VITE_SUPABASE_ANON_KEY</p>
             </div>
+          </div>
+        ) : !session ? (
+          <div className="text-center py-20 space-y-6">
+            <div className="w-24 h-24 bg-emerald-50 rounded-[2.5rem] flex items-center justify-center mx-auto shadow-xl shadow-emerald-100">
+              <Smartphone className="w-12 h-12 text-emerald-600" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-black tracking-tight">مرحباً بك في مدى</h2>
+              <p className="text-gray-500 text-sm px-10">سجل دخولك لإدارة طلبات متجرك عبر واتساب بكل سهولة.</p>
+            </div>
+            <button 
+              onClick={handleLogin}
+              className="w-full bg-emerald-600 text-white py-4 rounded-3xl font-bold text-base shadow-xl shadow-emerald-200 flex items-center justify-center gap-3 hover:bg-emerald-700 transition-all active:scale-95"
+            >
+              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5 bg-white rounded-full p-0.5" />
+              الدخول بواسطة جوجل
+            </button>
           </div>
         ) : error ? (
           <div className="text-center py-20 space-y-4">
@@ -314,11 +372,7 @@ export default function App() {
             </div>
             
             <div className="grid gap-3">
-              {[
-                { name: 'عطر عود فاخر', stock: 12, price: 150 },
-                { name: 'زعفران 10 جرام', stock: 3, price: 85 },
-                { name: 'قهوة عربية', stock: 45, price: 45 },
-              ].map((product, i) => (
+              {products.map((product, i) => (
                 <div key={i} className="bg-white p-5 rounded-3xl border border-gray-100 flex items-center justify-between shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex items-center gap-4">
                     <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center">
@@ -326,7 +380,7 @@ export default function App() {
                     </div>
                     <div>
                       <p className="font-bold text-base">{product.name}</p>
-                      <p className="text-xs font-bold text-emerald-600 bg-emerald-50 inline-block px-2 py-0.5 rounded-full">{product.price} ر.س</p>
+                      <p className="text-xs font-bold text-emerald-600 bg-emerald-50 inline-block px-2 py-0.5 rounded-full">{Number(product.price).toFixed(2)} ر.س</p>
                     </div>
                   </div>
                   <div className="text-left">
@@ -337,6 +391,9 @@ export default function App() {
                   </div>
                 </div>
               ))}
+              {products.length === 0 && (
+                <p className="text-center py-10 text-gray-400 text-sm">لا توجد منتجات حالياً.</p>
+              )}
             </div>
           </motion.div>
         )}
